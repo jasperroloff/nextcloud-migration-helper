@@ -2,6 +2,7 @@ import configparser
 import os.path
 import logging
 import zoneinfo
+import urllib.parse
 from typing import Dict
 
 import nextcloud.api_wrappers
@@ -20,12 +21,14 @@ class NextcloudMigrationHelper:
     old_webdav_wrapper: nextcloud.api_wrappers.WebDAV
     old_share_wrapper: nextcloud.api_wrappers.Share
     old_sub_folder: str
+    old_nc_url: str
 
     new_nc: NextCloud
     new_webdav_wrapper: nextcloud.api_wrappers.WebDAV
     new_share_wrapper: nextcloud.api_wrappers.Share
     new_sub_folder: str
     new_nc_username: str
+    new_nc_url: str
 
     local_tmp_dir: str
     remote_folder_fs_path: str
@@ -49,6 +52,9 @@ class NextcloudMigrationHelper:
         self.old_webdav_wrapper = nextcloud.api_wrappers.WebDAV(client=self.old_nc)
         self.old_share_wrapper = nextcloud.api_wrappers.Share(client=self.old_nc)
         self.old_sub_folder = old_sub_folder
+        self.old_nc_url = old_nc_url
+        if self.old_nc_url.endswith("/"):
+            self.old_nc_url = self.old_nc_url[:-1]
         if not self.old_sub_folder.endswith("/"):
             self.old_sub_folder += "/"
         if not self.old_sub_folder.startswith("/"):
@@ -59,6 +65,9 @@ class NextcloudMigrationHelper:
         self.new_share_wrapper = nextcloud.api_wrappers.Share(client=self.new_nc)
         self.new_sub_folder = new_sub_folder
         self.new_nc_username = new_nc_username
+        self.new_nc_url = new_nc_url
+        if self.new_nc_url.endswith("/"):
+            self.new_nc_url = self.new_nc_url[:-1]
         if not self.new_sub_folder.endswith("/"):
             self.new_sub_folder += "/"
         if not self.new_sub_folder.startswith("/"):
@@ -73,7 +82,6 @@ class NextcloudMigrationHelper:
         self.server_tz = server_tz
 
         db_path = os.path.join(self.local_tmp_dir, "files.db")
-        print(db_path)
         self.session = init_db(f"sqlite+pysqlite:///{db_path}")
 
         logging.info("initialized")
@@ -251,13 +259,34 @@ class NextcloudMigrationHelper:
             script_file.write(f"echo 'Run the following occ command to load the changes into Nextcloud:'\n")
             script_file.write(f"echo {scan_cmd_escaped}\n")
 
+    def generate_nginx_redirect_config(self):
+        with open(os.path.join(self.local_tmp_dir, "nginx.conf"), "w") as nginx_conf:
+            nginx_conf.write(
+                "map_hash_bucket_size 256; # see http://nginx.org/en/docs/hash.html\n"
+                "map $request_uri $new_uri {\n"
+                "   include old_new.map;\n"
+                "}\n"
+                "server {\n"
+                "   listen 80;\n"
+                "   server_name localhost;\n"
+                "   if ($new_uri) {\n"
+                "       return 301 $new_uri;\n"
+                "    }\n"
+                "}\n"
+            )
+
+        with open(os.path.join(self.local_tmp_dir, "old_new.map"), "w") as redirect_map:
+            path_prefix = urllib.parse.urlparse(self.old_nc_url).path
+            for file in self.session.query(FileInfo):
+                redirect_map.write(f"{path_prefix}/f/{file.old_file_id} {self.new_nc_url}/f/{file.new_file_id}\n")
+
     def run(self):
         self.build_index()
         self.move_files()
         self.fetch_new_file_ids()
         # self.create_shares()
+        self.generate_nginx_redirect_config()
         self.generate_dir_timestamp_script()
-        # self.generate_redirect_list()
 
 
 if __name__ == '__main__':
