@@ -50,6 +50,14 @@ python main.py
 
 ## Tips
 
+### Resume after interrupt
+
+If you have to interrupt the program (e.g. because of network issues), you can simply start it again. It should then resume where it stopped.
+
+### Clean start
+
+To do a clean start, just delete the local tmp directory or the `files.db` file in it.
+
 ### Show progress
 
 While uploading, the progress can be viewed by doing the following query against the database file:
